@@ -23,7 +23,8 @@ class DynamoProblemSolver:
     """Solves the specific dynamo problem given in the requirements"""
 
     def __init__(self, speed_rpm=1000, power_output_kw=20, terminal_voltage=220,
-                 ra=0.04, rsh=110, rse=0.05, efficiency=0.85):
+                 ra=0.04, rsh=110, rse=0.05, efficiency=0.85, machine_type='compound',
+                 mech_core_loss=None):
         self.speed_rpm = speed_rpm
         self.power_output_w = power_output_kw * 1000
         self.V_t = terminal_voltage
@@ -31,10 +32,80 @@ class DynamoProblemSolver:
         self.Rsh = rsh
         self.Rse = rse
         self.efficiency = efficiency
+        self.machine_type = machine_type  # 'shunt' or 'compound'
+        self.mech_core_loss = mech_core_loss  # If specified, use this instead of calculating
         self.results = {}
 
     def solve(self):
         """Solve the complete dynamo problem"""
+        if self.machine_type == 'shunt':
+            return self.solve_shunt()
+        else:
+            return self.solve_compound()
+
+    def solve_shunt(self):
+        """Solve DC shunt generator problem"""
+        # Load current
+        I_L = self.power_output_w / self.V_t
+
+        # Shunt field current
+        I_sh = self.V_t / self.Rsh
+
+        # Armature current (for shunt generator: Ia = IL + Ish)
+        I_a = I_L + I_sh
+
+        # Back EMF
+        E_b = self.V_t + I_a * self.Ra
+
+        # Copper losses
+        copper_loss_armature = I_a**2 * self.Ra
+        copper_loss_shunt = I_sh**2 * self.Rsh
+        total_copper_loss = copper_loss_armature + copper_loss_shunt
+
+        # Calculate power and losses
+        if self.mech_core_loss is not None:
+            # Mechanical and core losses given
+            iron_friction_loss = self.mech_core_loss
+            total_losses = total_copper_loss + iron_friction_loss
+            P_input = self.power_output_w + total_losses
+            efficiency_calculated = (self.power_output_w / P_input) * 100 if P_input > 0 else 0
+        else:
+            # Efficiency given, calculate mechanical losses
+            P_input = self.power_output_w / self.efficiency
+            total_losses = P_input - self.power_output_w
+            iron_friction_loss = total_losses - total_copper_loss
+            efficiency_calculated = self.efficiency * 100
+
+        # Torque calculations
+        omega = (2 * math.pi * self.speed_rpm) / 60  # rad/s
+        torque_prime_mover = P_input / omega if omega > 0 else 0
+        torque_electromagnetic = E_b * I_a / omega if omega > 0 else 0
+
+        self.results = {
+            'load_current': I_L,
+            'shunt_field_current': I_sh,
+            'armature_current': I_a,
+            'series_field_current': 0,  # No series field in shunt generator
+            'back_emf': E_b,
+            'copper_loss_total': total_copper_loss,
+            'copper_loss_armature': copper_loss_armature,
+            'copper_loss_shunt': copper_loss_shunt,
+            'copper_loss_series': 0,
+            'iron_friction_loss': iron_friction_loss,
+            'total_losses': total_losses,
+            'input_power': P_input,
+            'output_power': self.power_output_w,
+            'shaft_power_kw': P_input / 1000,
+            'efficiency_percent': efficiency_calculated,
+            'torque_prime_mover': torque_prime_mover,
+            'torque_electromagnetic': torque_electromagnetic,
+            'speed_rad_s': omega
+        }
+
+        return self.results
+
+    def solve_compound(self):
+        """Solve DC compound generator problem"""
         # Load current
         I_L = self.power_output_w / self.V_t
 
@@ -62,21 +133,24 @@ class DynamoProblemSolver:
         copper_loss_series = I_se**2 * self.Rse
         total_copper_loss = copper_loss_armature + copper_loss_shunt + copper_loss_series
 
-        # Input power
-        P_input = self.power_output_w / self.efficiency
-
-        # Total losses
-        total_losses = P_input - self.power_output_w
-
-        # Iron and friction losses
-        iron_friction_loss = total_losses - total_copper_loss
+        # Calculate power and losses
+        if self.mech_core_loss is not None:
+            iron_friction_loss = self.mech_core_loss
+            total_losses = total_copper_loss + iron_friction_loss
+            P_input = self.power_output_w + total_losses
+            efficiency_calculated = (self.power_output_w / P_input) * 100 if P_input > 0 else 0
+        else:
+            P_input = self.power_output_w / self.efficiency
+            total_losses = P_input - self.power_output_w
+            iron_friction_loss = total_losses - total_copper_loss
+            efficiency_calculated = self.efficiency * 100
 
         # Torque developed by prime mover
         omega = (2 * math.pi * self.speed_rpm) / 60  # rad/s
-        torque_prime_mover = P_input / omega
+        torque_prime_mover = P_input / omega if omega > 0 else 0
 
         # Electromagnetic torque
-        torque_electromagnetic = E_b * I_a / omega
+        torque_electromagnetic = E_b * I_a / omega if omega > 0 else 0
 
         self.results = {
             'load_current': I_L,
@@ -91,6 +165,9 @@ class DynamoProblemSolver:
             'iron_friction_loss': iron_friction_loss,
             'total_losses': total_losses,
             'input_power': P_input,
+            'output_power': self.power_output_w,
+            'shaft_power_kw': P_input / 1000,
+            'efficiency_percent': efficiency_calculated,
             'torque_prime_mover': torque_prime_mover,
             'torque_electromagnetic': torque_electromagnetic,
             'speed_rad_s': omega
@@ -103,41 +180,57 @@ class DynamoProblemSolver:
         if not self.results:
             self.solve()
 
-        output = "="*60 + "\n"
-        output += "DYNAMO PROBLEM SOLUTION\n"
-        output += "="*60 + "\n\n"
+        output = "="*70 + "\n"
+        output += f"DC {self.machine_type.upper()} GENERATOR PROBLEM SOLUTION\n"
+        output += "="*70 + "\n\n"
         output += f"Given Parameters:\n"
+        output += f"  Machine Type: DC {self.machine_type.title()} Generator\n"
         output += f"  Speed: {self.speed_rpm} RPM\n"
         output += f"  Power Output: {self.power_output_w/1000:.2f} kW\n"
         output += f"  Terminal Voltage: {self.V_t} V\n"
-        output += f"  Ra = {self.Ra} Ω, Rsh = {self.Rsh} Ω, Rse = {self.Rse} Ω\n"
-        output += f"  Efficiency: {self.efficiency*100}%\n\n"
+        output += f"  Armature Resistance (Ra): {self.Ra} Ω\n"
+        output += f"  Shunt Field Resistance (Rsh): {self.Rsh} Ω\n"
+        if self.machine_type == 'compound':
+            output += f"  Series Field Resistance (Rse): {self.Rse} Ω\n"
+        if self.mech_core_loss is not None:
+            output += f"  Mechanical & Core Losses: {self.mech_core_loss} W\n"
+        else:
+            output += f"  Efficiency: {self.efficiency*100}%\n"
+        output += "\n"
 
         output += f"Calculated Values:\n"
         output += f"  Load Current (IL): {self.results['load_current']:.3f} A\n"
         output += f"  Shunt Field Current (Ish): {self.results['shunt_field_current']:.3f} A\n"
         output += f"  Armature Current (Ia): {self.results['armature_current']:.3f} A\n"
+        if self.machine_type == 'compound':
+            output += f"  Series Field Current (Ise): {self.results['series_field_current']:.3f} A\n"
         output += f"  Back EMF (Eb): {self.results['back_emf']:.3f} V\n\n"
 
-        output += "="*60 + "\n"
-        output += "ANSWERS:\n"
-        output += "="*60 + "\n\n"
+        output += "="*70 + "\n"
+        output += "KEY RESULTS:\n"
+        output += "="*70 + "\n\n"
 
-        output += f"(i) COPPER LOSSES:\n"
-        output += f"    Armature Copper Loss: {self.results['copper_loss_armature']:.3f} W\n"
-        output += f"    Shunt Field Copper Loss: {self.results['copper_loss_shunt']:.3f} W\n"
-        output += f"    Series Field Copper Loss: {self.results['copper_loss_series']:.3f} W\n"
-        output += f"    TOTAL COPPER LOSS: {self.results['copper_loss_total']:.3f} W ({self.results['copper_loss_total']/1000:.3f} kW)\n\n"
+        output += f"(a) SHAFT POWER REQUIRED: {self.results['shaft_power_kw']:.3f} kW\n\n"
 
-        output += f"(ii) IRON AND FRICTION LOSS: {self.results['iron_friction_loss']:.3f} W ({self.results['iron_friction_loss']/1000:.3f} kW)\n\n"
+        output += f"(b) EFFICIENCY: {self.results['efficiency_percent']:.2f}%\n\n"
 
-        output += f"(iii) TORQUE DEVELOPED BY PRIME MOVER: {self.results['torque_prime_mover']:.3f} N·m\n\n"
+        output += f"(c) LOSSES BREAKDOWN:\n"
+        output += f"    Armature Copper Loss (Ia²Ra): {self.results['copper_loss_armature']:.3f} W\n"
+        output += f"    Shunt Field Copper Loss (Ish²Rsh): {self.results['copper_loss_shunt']:.3f} W\n"
+        if self.machine_type == 'compound':
+            output += f"    Series Field Copper Loss (Ise²Rse): {self.results['copper_loss_series']:.3f} W\n"
+        output += f"    Total Copper Loss: {self.results['copper_loss_total']:.3f} W ({self.results['copper_loss_total']/1000:.3f} kW)\n"
+        output += f"    Mechanical & Core Loss: {self.results['iron_friction_loss']:.3f} W ({self.results['iron_friction_loss']/1000:.3f} kW)\n"
+        output += f"    TOTAL LOSSES: {self.results['total_losses']:.3f} W ({self.results['total_losses']/1000:.3f} kW)\n\n"
+
+        output += f"(d) TORQUE ANALYSIS:\n"
+        output += f"    Torque at Driving Shaft: {self.results['torque_prime_mover']:.3f} N·m\n"
+        output += f"    Electromagnetic Torque: {self.results['torque_electromagnetic']:.3f} N·m\n\n"
 
         output += f"Additional Information:\n"
-        output += f"  Input Power: {self.results['input_power']/1000:.3f} kW\n"
-        output += f"  Total Losses: {self.results['total_losses']/1000:.3f} kW\n"
-        output += f"  Electromagnetic Torque: {self.results['torque_electromagnetic']:.3f} N·m\n"
         output += f"  Angular Speed: {self.results['speed_rad_s']:.3f} rad/s\n"
+        output += f"  Input Power (Shaft): {self.results['input_power']/1000:.3f} kW\n"
+        output += f"  Output Power (Electrical): {self.results['output_power']/1000:.3f} kW\n"
 
         return output
 
@@ -548,28 +641,69 @@ class DynamoSimulatorGUI:
         input_frame = ttk.LabelFrame(tab, text='Input Parameters', padding=10)
         input_frame.grid(row=0, column=0, sticky='ew', padx=10, pady=5)
 
+        # Machine type selection
+        ttk.Label(input_frame, text='Machine Type:').grid(row=0, column=0, sticky='w', padx=5, pady=2)
+        self.machine_type_var = tk.StringVar(value='shunt')
+        machine_frame = ttk.Frame(input_frame)
+        machine_frame.grid(row=0, column=1, sticky='w', padx=5, pady=2)
+        ttk.Radiobutton(machine_frame, text='Shunt', variable=self.machine_type_var,
+                       value='shunt', command=self.update_input_fields).pack(side=tk.LEFT)
+        ttk.Radiobutton(machine_frame, text='Compound', variable=self.machine_type_var,
+                       value='compound', command=self.update_input_fields).pack(side=tk.LEFT)
+
         # Create input fields
         self.ps_inputs = {}
         params = [
             ('Speed (RPM)', 'speed_rpm', 1000),
-            ('Power Output (kW)', 'power_kw', 20),
-            ('Terminal Voltage (V)', 'voltage', 220),
-            ('Armature Resistance (Ω)', 'ra', 0.04),
-            ('Shunt Field Resistance (Ω)', 'rsh', 110),
+            ('Power Output (kW)', 'power_kw', 10),
+            ('Terminal Voltage (V)', 'voltage', 240),
+            ('Armature Resistance (Ω)', 'ra', 0.6),
+            ('Shunt Field Resistance (Ω)', 'rsh', 160),
             ('Series Field Resistance (Ω)', 'rse', 0.05),
-            ('Efficiency (%)', 'efficiency', 85)
         ]
 
+        self.param_labels = {}
         for i, (label, key, default) in enumerate(params):
-            ttk.Label(input_frame, text=label).grid(row=i, column=0, sticky='w', padx=5, pady=2)
+            lbl = ttk.Label(input_frame, text=label)
+            lbl.grid(row=i+1, column=0, sticky='w', padx=5, pady=2)
+            self.param_labels[key] = lbl
             entry = ttk.Entry(input_frame, width=15)
             entry.insert(0, str(default))
-            entry.grid(row=i, column=1, padx=5, pady=2)
+            entry.grid(row=i+1, column=1, padx=5, pady=2)
             self.ps_inputs[key] = entry
 
+        # Loss/Efficiency selection
+        row_idx = len(params) + 1
+        ttk.Label(input_frame, text='Known Parameter:').grid(row=row_idx, column=0, sticky='w', padx=5, pady=2)
+        self.loss_eff_var = tk.StringVar(value='mech_loss')
+        loss_eff_frame = ttk.Frame(input_frame)
+        loss_eff_frame.grid(row=row_idx, column=1, sticky='w', padx=5, pady=2)
+        ttk.Radiobutton(loss_eff_frame, text='Mech+Core Loss', variable=self.loss_eff_var,
+                       value='mech_loss', command=self.update_input_fields).pack(side=tk.LEFT)
+        ttk.Radiobutton(loss_eff_frame, text='Efficiency', variable=self.loss_eff_var,
+                       value='efficiency', command=self.update_input_fields).pack(side=tk.LEFT)
+
+        row_idx += 1
+        self.mech_loss_label = ttk.Label(input_frame, text='Mech & Core Loss (W):')
+        self.mech_loss_label.grid(row=row_idx, column=0, sticky='w', padx=5, pady=2)
+        self.mech_loss_entry = ttk.Entry(input_frame, width=15)
+        self.mech_loss_entry.insert(0, '500')
+        self.mech_loss_entry.grid(row=row_idx, column=1, padx=5, pady=2)
+
+        row_idx += 1
+        self.efficiency_label = ttk.Label(input_frame, text='Efficiency (%):')
+        self.efficiency_label.grid(row=row_idx, column=0, sticky='w', padx=5, pady=2)
+        self.efficiency_entry = ttk.Entry(input_frame, width=15)
+        self.efficiency_entry.insert(0, '85')
+        self.efficiency_entry.grid(row=row_idx, column=1, padx=5, pady=2)
+
+        # Update field visibility
+        self.update_input_fields()
+
         # Solve button
+        row_idx += 1
         ttk.Button(input_frame, text='Solve Problem',
-                  command=self.solve_problem).grid(row=len(params), column=0,
+                  command=self.solve_problem).grid(row=row_idx, column=0,
                                                    columnspan=2, pady=10)
 
         # Results frame
@@ -583,6 +717,31 @@ class DynamoSimulatorGUI:
                                                          font=('Courier', 10))
         self.ps_results_text.grid(row=0, column=0, sticky='nsew')
 
+    def update_input_fields(self):
+        """Update visibility of input fields based on selections"""
+        machine_type = self.machine_type_var.get()
+        loss_eff = self.loss_eff_var.get()
+
+        # Show/hide series field resistance based on machine type
+        if machine_type == 'shunt':
+            self.param_labels['rse'].grid_remove()
+            self.ps_inputs['rse'].grid_remove()
+        else:
+            self.param_labels['rse'].grid()
+            self.ps_inputs['rse'].grid()
+
+        # Show/hide mech loss or efficiency based on selection
+        if loss_eff == 'mech_loss':
+            self.mech_loss_label.grid()
+            self.mech_loss_entry.grid()
+            self.efficiency_label.grid_remove()
+            self.efficiency_entry.grid_remove()
+        else:
+            self.mech_loss_label.grid_remove()
+            self.mech_loss_entry.grid_remove()
+            self.efficiency_label.grid()
+            self.efficiency_entry.grid()
+
     def solve_problem(self):
         """Solve the dynamo problem with current inputs"""
         try:
@@ -593,10 +752,29 @@ class DynamoSimulatorGUI:
             ra = float(self.ps_inputs['ra'].get())
             rsh = float(self.ps_inputs['rsh'].get())
             rse = float(self.ps_inputs['rse'].get())
-            efficiency = float(self.ps_inputs['efficiency'].get()) / 100
+            machine_type = self.machine_type_var.get()
+            loss_eff = self.loss_eff_var.get()
+
+            # Get either mechanical loss or efficiency
+            if loss_eff == 'mech_loss':
+                mech_loss = float(self.mech_loss_entry.get())
+                efficiency = None
+            else:
+                mech_loss = None
+                efficiency = float(self.efficiency_entry.get()) / 100
 
             # Create solver and solve
-            solver = DynamoProblemSolver(speed, power_kw, voltage, ra, rsh, rse, efficiency)
+            solver = DynamoProblemSolver(
+                speed_rpm=speed,
+                power_output_kw=power_kw,
+                terminal_voltage=voltage,
+                ra=ra,
+                rsh=rsh,
+                rse=rse,
+                efficiency=efficiency if efficiency else 0.85,
+                machine_type=machine_type,
+                mech_core_loss=mech_loss
+            )
             results_text = solver.get_formatted_results()
 
             # Display results
@@ -1337,12 +1515,34 @@ def main():
 if __name__ == '__main__':
     # Print solution to console as well
     print("="*70)
-    print("INITIAL PROBLEM SOLUTION")
+    print("DC SHUNT GENERATOR PROBLEM SOLUTION")
     print("="*70)
-    solver = DynamoProblemSolver()
+    print("\nProblem Statement:")
+    print("A D.C. shunt generator has a full load output of 10 kW at a terminal")
+    print("voltage of 240 V. The armature and the shunt field winding resistances")
+    print("are 0.6 and 160 ohms respectively. The sum of the mechanical and core")
+    print("losses is 500 W. Calculate:")
+    print("(a) The power required, in kW, at the driving shaft at full load")
+    print("(b) The corresponding efficiency")
+    print("\n" + "="*70 + "\n")
+
+    # Solve the specific DC shunt generator problem
+    solver = DynamoProblemSolver(
+        speed_rpm=1000,  # Assumed
+        power_output_kw=10,
+        terminal_voltage=240,
+        ra=0.6,
+        rsh=160,
+        rse=0,
+        efficiency=0.85,  # Not used when mech_core_loss is specified
+        machine_type='shunt',
+        mech_core_loss=500
+    )
     print(solver.get_formatted_results())
-    print("\nStarting GUI application...")
-    print("="*70)
+
+    print("\n" + "="*70)
+    print("Starting GUI application for interactive analysis...")
+    print("="*70 + "\n")
 
     # Launch GUI
     main()
