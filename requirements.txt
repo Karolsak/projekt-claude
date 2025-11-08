@@ -1,0 +1,16 @@
+# Compound Generator Advanced Simulation - Requirements
+# Python 3.7+
+
+# Core scientific computing
+numpy>=1.19.0
+scipy>=1.5.0
+
+# GUI (for full application)
+# Note: tkinter usually comes with Python installation
+# If missing, install python3-tk on Linux: sudo apt-get install python3-tk
+
+# Visualization
+matplotlib>=3.3.0
+
+# Optional: for enhanced data export
+pandas>=1.1.0
