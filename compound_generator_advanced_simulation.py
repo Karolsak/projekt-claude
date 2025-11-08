@@ -206,10 +206,8 @@ class ProtectionSettings:
     """Machine protection settings"""
     overcurrent_limit: float = 150.0  # A
     overvoltage_limit: float = 130.0  # V
-    undervoltage_limit: float = 90.0  # V
     overtemp_limit: float = 120.0  # °C
     overspeed_limit: float = 2000.0  # RPM
-    undervoltage_time: float = 0.5  # s
     overcurrent_time: float = 0.1  # s
 
 
@@ -240,7 +238,6 @@ class CompoundGeneratorModel:
         self.protection_status = {
             'overcurrent': False,
             'overvoltage': False,
-            'undervoltage': False,
             'overtemperature': False,
             'overspeed': False
         }
@@ -467,13 +464,6 @@ class ProtectionSystem:
             self.log_trip('OVERVOLTAGE', state.get('Vt', 0))
         else:
             trips['overvoltage'] = False
-
-        # Undervoltage protection (ANSI 27)
-        if state.get('Vt', 0) < self.settings.undervoltage_limit:
-            trips['undervoltage'] = True
-            self.log_trip('UNDERVOLTAGE', state.get('Vt', 0))
-        else:
-            trips['undervoltage'] = False
 
         # Overtemperature protection (ANSI 49)
         if state.get('temp', 0) > self.settings.overtemp_limit:
@@ -866,10 +856,8 @@ class CompoundGeneratorSimulator(tk.Tk):
         protection_params = [
             ('Overcurrent Limit (A):', 'overcurrent_limit', 150.0),
             ('Overvoltage Limit (V):', 'overvoltage_limit', 130.0),
-            ('Undervoltage Limit (V):', 'undervoltage_limit', 90.0),
             ('Overtemperature Limit (°C):', 'overtemp_limit', 120.0),
             ('Overspeed Limit (RPM):', 'overspeed_limit', 2000.0),
-            ('Undervoltage Time (s):', 'undervoltage_time', 0.5),
             ('Overcurrent Time (s):', 'overcurrent_time', 0.1),
         ]
 
@@ -889,7 +877,6 @@ class CompoundGeneratorSimulator(tk.Tk):
         protections = [
             ('Overcurrent (50/51)', 'overcurrent'),
             ('Overvoltage (59)', 'overvoltage'),
-            ('Undervoltage (27)', 'undervoltage'),
             ('Overtemperature (49)', 'overtemperature'),
             ('Overspeed (12)', 'overspeed'),
         ]
